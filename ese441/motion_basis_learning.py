@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 from scipy import stats
 
-class crbm():
+class motion_basis_learning():
     '''
     input data has to be shape of (1, 3, n, 1), where n is length. for example,
     accelerometer, 3 represents 3 axis, and n represent time points.
@@ -60,8 +60,11 @@ class crbm():
         energy_fantasy = -tf.reduce_sum(h_fantasy_in*convolution_fantasy[0,0,:,:]) \
                             - tf.reduce_sum(hb*tf.reduce_sum(h_fantasy_in, axis=0)) \
                             - tf.reduce_sum(vb*tf.reduce_sum(v_fantasy_in, axis=0))
+
+        # regularization
+        reg = tf.reduce_mean(tf.nn.sigmoid(convolution_real[0,0,:,:] + hb))
         
-        loss = tf.reduce_mean(energy_real - energy_fantasy)
+        loss = tf.reduce_mean(energy_real - energy_fantasy) + reg
 
 
         self.h_shape = h_shape
@@ -71,6 +74,7 @@ class crbm():
         self.h_fantasy_in = h_fantasy_in
         self.v_fantasy_in = v_fantasy_in
         self.loss = loss
+        self.reg = reg
         self.training_data = training_data
 
     def train(self, steps=100, convergence_point=None, learning_rate=0.001, sigma=2, verbose=False, gibb_steps=1):
@@ -83,6 +87,7 @@ class crbm():
         v_fantasy_in = self.v_fantasy_in
         sess = self.sess
         loss = self.loss
+        reg = self.reg
 
         optimizer = tf.train.GradientDescentOptimizer(learning_rate)
         training = optimizer.minimize(loss)
@@ -104,7 +109,7 @@ class crbm():
             }
             sess.run(training, feed_dict=feed_dict)
             if verbose:
-                print(sess.run(loss, feed_dict=feed_dict))
+                print(str(sess.run(loss, feed_dict=feed_dict)) + ',' + str(sess.run(reg, feed_dict=feed_dict)))
 
     def _gen_h(self, v):
         '''
