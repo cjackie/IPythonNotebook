@@ -63,9 +63,12 @@ class motion_basis_learning():
 
         # regularization
         reg = tf.reduce_mean(tf.nn.sigmoid(convolution_real[0,0,:,:] + hb))
-        
+        # loss
         loss = tf.reduce_mean(energy_real - energy_fantasy) + reg
 
+        learning_rate_in = tf.placeholder(tf.float32)
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate_in)
+        training = optimizer.minimize(loss)
 
         self.h_shape = h_shape
         self.v_shape = v_shape
@@ -76,6 +79,8 @@ class motion_basis_learning():
         self.loss = loss
         self.reg = reg
         self.training_data = training_data
+        self.learning_rate_in = learning_rate_in
+        self.training = training
 
     def train(self, steps=100, convergence_point=None, learning_rate=0.001, sigma=2, verbose=False, gibb_steps=1):
         training_data = self.training_data
@@ -88,9 +93,9 @@ class motion_basis_learning():
         sess = self.sess
         loss = self.loss
         reg = self.reg
+        learning_rate_in = self.learning_rate_in
+        training = self.training
 
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-        training = optimizer.minimize(loss)
         for _ in range(steps):
             #gibb sampling
             v_real = training_data
@@ -105,7 +110,8 @@ class motion_basis_learning():
                 h_real_in: h_real, 
                 v_real_in: v_real,
                 h_fantasy_in: h_fantasy,
-                v_fantasy_in: v_fantasy
+                v_fantasy_in: v_fantasy,
+                learning_rate_in: learning_rate
             }
             sess.run(training, feed_dict=feed_dict)
             if verbose:
@@ -126,9 +132,11 @@ class motion_basis_learning():
         for i in range(convoluted.shape[3]):
             for j in range(convoluted.shape[2]/pooling_size):
                 convoluted_j = convoluted[0,0,j*pooling_size:(j+1)*pooling_size,i]
-                prob_not_normalized = np.power(np.e, np.concatenate((convoluted_j, [1]), axis=0))
+                # how to deal with overflow?
+                prob_not_normalized = np.power(np.e, np.concatenate((convoluted_j, [1]), axis=0)) 
                 prob = prob_not_normalized / sum(prob_not_normalized)
-                h_j = stats.rv_discrete(values=(range(len(prob)), prob)).rvs()
+                # h_j = stats.rv_discrete(values=(range(len(prob)), prob)).rvs() # bottle neck.
+                h_j = np.random.choice(range(pooling_size+1), p=prob)
                 if h_j == pooling_size:
                     # none of h_real[j*pooling_size:j*(pooling_size+1),i] be 1
                     pass
