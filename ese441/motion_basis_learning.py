@@ -4,8 +4,8 @@ from scipy import stats
 
 class motion_basis_learning():
     '''
-    input data has to be shape of (1, 3, n, 1), where n is length. for example,
-    accelerometer, 3 represents 3 axis, and n represent time points.
+    input data has to be shape of (m, 3, n, 1), where n is length, and m number of batch.
+    for example, accelerometer, 3 represents 3 axis, and n represent time points.
     '''
 
     def __init__(self, k=50, filter_width=5, pooling_size=4, axis_num=3):
@@ -29,17 +29,18 @@ class motion_basis_learning():
 
     def build_training_model(self, training_data):
         '''
-        @training_data: np.array. shape of (1, 3, n, 1)
+        @training_data: np.array. shape of (m, 3, n, 1)
         '''
 
         filter_width = self.filter_width
         k = self.k
         sess = self.sess
         param_scope_name = self.param_scope_name
+        batch_size = training_data.shape[0]
 
         v_len = training_data.shape[2]
         axis_num = training_data.shape[1]
-        h_shape = [v_len-filter_width+1, k]
+        h_shape = [batch_size, v_len-filter_width+1, k]
         v_shape = list(training_data.shape)
         with tf.variable_scope(param_scope_name) as crbm_scope:
             crbm_scope.reuse_variables()    
@@ -47,19 +48,20 @@ class motion_basis_learning():
             w_r = tf.reverse_v2(w, [0,1])
             hb = tf.get_variable('hidden_biase', shape=(k,), dtype=tf.float32)
             vb = tf.get_variable('visible_biase', shape=(1,), dtype=tf.float32)
-        h_real_in = tf.placeholder(tf.float32, shape=[v_len-filter_width+1, k]) # after full convolution
+
+        h_real_in = tf.placeholder(tf.float32, shape=[batch_size, v_len-filter_width+1, k]) # after full convolution
         v_real_in = tf.placeholder(tf.float32, shape=training_data.shape)
         convolution_real = tf.nn.convolution(v_real_in, w, 'VALID', strides=[1,1])
-        energy_real = -tf.reduce_sum(h_real_in*convolution_real[0,0,:,:]) \
-                        - tf.reduce_sum(hb*tf.reduce_sum(h_real_in, axis=0)) \
-                        - tf.reduce_sum(vb*tf.reduce_sum(v_real_in, axis=0))
+        energy_real = -tf.reduce_sum(h_real_in*convolution_real, axis=[1,2,3]) \
+                        - tf.reduce_sum(hb*tf.reduce_sum(h_real_in, axis=[1]), axis=[1]) \
+                        - tf.reduce_sum(vb*tf.reduce_sum(v_real_in, axis=[1,2,3]))
         
-        h_fantasy_in = tf.placeholder(tf.float32, shape=[v_len-filter_width+1, k]) # after full convolution
+        h_fantasy_in = tf.placeholder(tf.float32, shape=[batch_size, v_len-filter_width+1, k]) # after full convolution
         v_fantasy_in = tf.placeholder(tf.float32, shape=training_data.shape)
         convolution_fantasy = tf.nn.convolution(v_fantasy_in, w, 'VALID', strides=[1,1])
-        energy_fantasy = -tf.reduce_sum(h_fantasy_in*convolution_fantasy[0,0,:,:]) \
-                            - tf.reduce_sum(hb*tf.reduce_sum(h_fantasy_in, axis=0)) \
-                            - tf.reduce_sum(vb*tf.reduce_sum(v_fantasy_in, axis=0))
+        energy_fantasy = -tf.reduce_sum(h_fantasy_in*convolution_fantasy, axis=[1,2,3]) \
+                            - tf.reduce_sum(hb*tf.reduce_sum(h_fantasy_in, axis=[1]), axis=[1]) \
+                            - tf.reduce_sum(vb*tf.reduce_sum(v_fantasy_in, axis=[1,2,3]))
 
         # to prevent weight "explosion" during learning.
         data_len = training_data.shape[2]
@@ -67,7 +69,7 @@ class motion_basis_learning():
         energy_fantasy = energy_fantasy / data_len
 
         # regularization
-        reg = tf.reduce_mean(tf.nn.sigmoid(convolution_real[0,0,:,:] + hb))
+        reg = tf.reduce_mean(tf.nn.sigmoid(convolution_real + hb))
         # loss
         loss = tf.reduce_mean(energy_real - energy_fantasy) + reg
 
@@ -75,6 +77,7 @@ class motion_basis_learning():
         optimizer = tf.train.GradientDescentOptimizer(learning_rate_in)
         training = optimizer.minimize(loss)
 
+        self.batch_size = batch_size
         self.h_shape = h_shape
         self.v_shape = v_shape
         self.h_real_in = h_real_in
@@ -122,6 +125,7 @@ class motion_basis_learning():
             if verbose:
                 print(str(sess.run(loss, feed_dict=feed_dict)) + ',' + str(sess.run(reg, feed_dict=feed_dict)))
 
+
     def _gen_h(self, v):
         '''
         @v: tensor
@@ -131,27 +135,30 @@ class motion_basis_learning():
         w = self.w
         hb = self.hb
         sess = self.sess
+        batch_size = self.batch_size
 
         h = np.zeros(h_shape)
         convoluted = sess.run(tf.nn.convolution(v, w, 'VALID', strides=[1,1]) + hb)
-        for i in range(convoluted.shape[3]):
-            for j in range(convoluted.shape[2]/pooling_size):
-                convoluted_j = convoluted[0,0,j*pooling_size:(j+1)*pooling_size,i]
-                # how to deal with overflow?
-                prob_not_normalized = np.power(np.e, np.concatenate((convoluted_j, [1]), axis=0)) 
-                prob = prob_not_normalized / sum(prob_not_normalized)
-                # h_j = stats.rv_discrete(values=(range(len(prob)), prob)).rvs() # bottle neck.
-                h_j = np.random.choice(range(pooling_size+1), p=prob)
-                if h_j == pooling_size:
-                    # none of h_real[j*pooling_size:j*(pooling_size+1),i] be 1
-                    pass
-                else:
-                    h[j*pooling_size+h_j,i] = 1
+        for batch_i in range(batch_size):
+            for i in range(convoluted.shape[3]):
+                for j in range(convoluted.shape[2]/pooling_size):
+                    convoluted_j = convoluted[batch_i,0,j*pooling_size:(j+1)*pooling_size,i]
+                    # how to deal with overflow?
+                    prob_not_normalized = np.power(np.e, np.concatenate((convoluted_j, [1]), axis=0)) 
+                    prob = prob_not_normalized / sum(prob_not_normalized)
+                    # h_j = stats.rv_discrete(values=(range(len(prob)), prob)).rvs() # bottle neck.
+                    h_j = np.random.choice(range(pooling_size+1), p=prob)
+                    if h_j == pooling_size:
+                        # none of h_real[j*pooling_size:j*(pooling_size+1),i] be 1
+                        pass
+                    else:
+                        h[batch_i,j*pooling_size+h_j,i] = 1
         return h
 
     def _gen_v(self, h, sigma):
         '''
         @h: tensor
+        @sigma: float. perturbation.
         '''
         v_shape = self.v_shape
         axis_num = self.axis_num
@@ -162,8 +169,8 @@ class motion_basis_learning():
 
         v = np.zeros(v_shape)
         # convolution related to reconstruction
-        h_rec_in_fitted = tf.expand_dims(tf.expand_dims(tf.expand_dims(h, 0), 0), -1)
-        h_rec_in_fitted = tf.pad(h_rec_in_fitted, [[0,0],[axis_num-1, axis_num-1],[filter_width-1,filter_width-1],[0,0], [0,0]])
+        h_rec_in_fitted = tf.expand_dims(tf.expand_dims(h, 1), -1)
+        h_rec_in_fitted = tf.pad(h_rec_in_fitted, [[0,0],[axis_num-1, axis_num-1],[filter_width-1,filter_width-1],[0,0],[0,0]])
         w_r_fitted = tf.expand_dims(tf.expand_dims(tf.squeeze(w_r), -1), -1)
         convolution_rec_raw = sess.run(tf.nn.convolution(h_rec_in_fitted, w_r_fitted, 'VALID', strides=[1,1,1]))
         convolution_rec = convolution_rec_raw[:,:,:,:,0] # same shape as `training_data`
