@@ -7,14 +7,17 @@ class motion_basis_learning():
     input data has to be shape of (m, 3, n, 1), where n is length, and m number of batch.
     for example, accelerometer, 3 represents 3 axis, and n represent time points.
     '''
+    SAVE_PARAMS_PATH = './save_variables/params'
+    SUMMARY_DIR = './summaries/'
 
     def __init__(self, k=50, filter_width=5, pooling_size=4, axis_num=3):
         self.k = k
         self.filter_width = filter_width
         self.pooling_size = pooling_size
         self.axis_num = axis_num
+        self.accumulated_steps = 0
 
-        self.param_scope_name = 'crbm_'+str(id(self))
+        self.param_scope_name = 'motion_basis_learning'
         with tf.variable_scope(self.param_scope_name) as crbm_scope:
             self.w = tf.get_variable('weights', shape=(axis_num, filter_width, 1, k), dtype=tf.float32, 
                         initializer=tf.random_normal_initializer())
@@ -27,9 +30,13 @@ class motion_basis_learning():
         # initialize parameters
         self.sess.run(tf.global_variables_initializer())
 
-    def build_training_model(self, training_data):
+
+    def build_training_model(self, training_data, restore_params_path=None, enable_save=True, 
+                save_interval=10, enable_summary=True, summary_flush_secs =10):
         '''
         @training_data: np.array. shape of (m, 3, n, 1)
+        @restore_params_path: string. if not None, restore variables. 
+            save
         '''
 
         filter_width = self.filter_width
@@ -37,6 +44,10 @@ class motion_basis_learning():
         sess = self.sess
         param_scope_name = self.param_scope_name
         batch_size = training_data.shape[0]
+
+        if restore_params_path != None:
+            # restore parameters
+            tf.train.Saver().restore(sess, restore_params_path)
 
         v_len = training_data.shape[2]
         axis_num = training_data.shape[1]
@@ -77,6 +88,25 @@ class motion_basis_learning():
         optimizer = tf.train.GradientDescentOptimizer(learning_rate_in)
         training = optimizer.minimize(loss)
 
+        summary_file = None
+        summaries = None
+        if enable_summary:
+            summary_file = tf.summary.FileWriter(motion_basis_learning.SUMMARY_DIR, 
+                    sess.graph, flush_secs=summary_flush_secs)
+            tf.summary.scalar('loss', loss)
+            tf.summary.scalar('probability', reg)
+            w_gradient = optimizer.compute_gradients(loss, var_list=[w])
+            tf.summary.histogram('weights_gradient', w_gradient)
+            hb_gradient = optimizer.compute_gradients(loss, var_list=[hb])
+            tf.summary.histogram('hidden_biases', hb_gradient)
+            vb_gradient = optimizer.compute_gradients(loss, var_list=[vb])
+            tf.summary.histogram('visible_biases', vb_gradient)
+            summaries = tf.summary.merge_all()
+
+        params_saver = None
+        if enable_save:
+            params_saver = tf.train.Saver(var_list=[w, vb, hb])
+
         self.batch_size = batch_size
         self.h_shape = h_shape
         self.v_shape = v_shape
@@ -89,6 +119,14 @@ class motion_basis_learning():
         self.training_data = training_data
         self.learning_rate_in = learning_rate_in
         self.training = training
+
+        self.enable_summary = enable_summary
+        self.enable_save = enable_save
+        self.save_interval = save_interval
+        self.params_saver = params_saver
+        self.enable_summary = enable_summary
+        self.summaries = summaries
+        self.summary_file = summary_file
 
     def train(self, steps=100, convergence_point=None, learning_rate=0.001, sigma=2, verbose=False, gibb_steps=1):
         training_data = self.training_data
@@ -104,7 +142,15 @@ class motion_basis_learning():
         learning_rate_in = self.learning_rate_in
         training = self.training
 
-        for _ in range(steps):
+        enable_summary = self.enable_summary
+        summaries = self.summaries
+        summary_file = self.summary_file
+        enable_save = self.enable_save
+        save_interval = self.save_interval
+        params_saver = self.params_saver
+        accumulated_steps = self.accumulated_steps
+
+        for s in range(steps):
             #gibb sampling
             v_real = training_data
             h_real = self._gen_h(tf.convert_to_tensor(v_real, tf.float32))
@@ -122,8 +168,15 @@ class motion_basis_learning():
                 learning_rate_in: learning_rate
             }
             sess.run(training, feed_dict=feed_dict)
+
             if verbose:
                 print(str(sess.run(loss, feed_dict=feed_dict)) + ',' + str(sess.run(reg, feed_dict=feed_dict)))
+            if enable_summary:
+                summary_file.add_summary(sess.run(summaries, feed_dict=feed_dict), accumulated_steps+s)
+            if enable_save and (accumulated_steps+s) % save_interval == 0:
+                params_saver.save(sess, motion_basis_learning.SAVE_PARAMS_PATH, global_step=accumulated_steps+s)
+
+        self.accumulated_steps += steps
 
 
     def _gen_h(self, v):
