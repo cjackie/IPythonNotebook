@@ -7,18 +7,19 @@ class MotionBasisLearner():
     input data has to be shape of (m, 3, n, 1), where n is length, and m number of batch.
     for example, accelerometer, 3 represents 3 axis, and n represent time points.
     '''
-    SAVE_PARAMS_PATH = './save_variables/params'
-    SUMMARY_DIR = './summaries/'
+    def __init__(self, k=50, filter_width=5, pooling_size=4, axis_num=3, param_scope_name='MotionBasisLearner',
+            save_params_path='./save_variables/params', summary_dir='./summaries/'):
 
-    def __init__(self, k=50, filter_width=5, pooling_size=4, axis_num=3):
         self.k = k
         self.filter_width = filter_width
         self.pooling_size = pooling_size
         self.axis_num = axis_num
+        self.save_params_path = save_params_path
+        self.summary_dir = summary_dir
         self.accumulated_steps = 0
+        self.param_scope_name = param_scope_name
 
-        self.param_scope_name = 'MotionBasisLearner'
-        with tf.variable_scope(self.param_scope_name) as crbm_scope:
+        with tf.variable_scope(param_scope_name) as crbm_scope:
             self.w = tf.get_variable('weights', shape=(axis_num, filter_width, 1, k), dtype=tf.float32, 
                         initializer=tf.random_normal_initializer())
             self.w_r = tf.reverse_v2(self.w, [0,1])
@@ -44,6 +45,7 @@ class MotionBasisLearner():
         sess = self.sess
         param_scope_name = self.param_scope_name
         batch_size = training_data.shape[0]
+        summary_dir = self.summary_dir
 
         if restore_params_path != None:
             # restore parameters
@@ -91,8 +93,7 @@ class MotionBasisLearner():
         summary_file = None
         summaries = None
         if enable_summary:
-            summary_file = tf.summary.FileWriter(MotionBasisLearner.SUMMARY_DIR, 
-                    sess.graph, flush_secs=summary_flush_secs)
+            summary_file = tf.summary.FileWriter(summary_dir, sess.graph, flush_secs=summary_flush_secs)
             tf.summary.scalar('loss', loss)
             tf.summary.scalar('probability', reg)
             w_gradient = optimizer.compute_gradients(loss, var_list=[w])
@@ -148,7 +149,9 @@ class MotionBasisLearner():
         enable_save = self.enable_save
         save_interval = self.save_interval
         params_saver = self.params_saver
+        save_params_path = self.save_params_path
         accumulated_steps = self.accumulated_steps
+
 
         for s in range(steps):
             #gibb sampling
@@ -174,7 +177,7 @@ class MotionBasisLearner():
             if enable_summary:
                 summary_file.add_summary(sess.run(summaries, feed_dict=feed_dict), accumulated_steps+s)
             if enable_save and (accumulated_steps+s) % save_interval == 0:
-                params_saver.save(sess, MotionBasisLearner.SAVE_PARAMS_PATH, global_step=accumulated_steps+s)
+                params_saver.save(sess, save_params_path, global_step=accumulated_steps+s)
 
         self.accumulated_steps += steps
 
