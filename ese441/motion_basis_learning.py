@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 from scipy import stats
 
-class motion_basis_learning():
+class MotionBasisLearner():
     '''
     input data has to be shape of (m, 3, n, 1), where n is length, and m number of batch.
     for example, accelerometer, 3 represents 3 axis, and n represent time points.
@@ -17,7 +17,7 @@ class motion_basis_learning():
         self.axis_num = axis_num
         self.accumulated_steps = 0
 
-        self.param_scope_name = 'motion_basis_learning'
+        self.param_scope_name = 'MotionBasisLearner'
         with tf.variable_scope(self.param_scope_name) as crbm_scope:
             self.w = tf.get_variable('weights', shape=(axis_num, filter_width, 1, k), dtype=tf.float32, 
                         initializer=tf.random_normal_initializer())
@@ -91,7 +91,7 @@ class motion_basis_learning():
         summary_file = None
         summaries = None
         if enable_summary:
-            summary_file = tf.summary.FileWriter(motion_basis_learning.SUMMARY_DIR, 
+            summary_file = tf.summary.FileWriter(MotionBasisLearner.SUMMARY_DIR, 
                     sess.graph, flush_secs=summary_flush_secs)
             tf.summary.scalar('loss', loss)
             tf.summary.scalar('probability', reg)
@@ -174,7 +174,7 @@ class motion_basis_learning():
             if enable_summary:
                 summary_file.add_summary(sess.run(summaries, feed_dict=feed_dict), accumulated_steps+s)
             if enable_save and (accumulated_steps+s) % save_interval == 0:
-                params_saver.save(sess, motion_basis_learning.SAVE_PARAMS_PATH, global_step=accumulated_steps+s)
+                params_saver.save(sess, MotionBasisLearner.SAVE_PARAMS_PATH, global_step=accumulated_steps+s)
 
         self.accumulated_steps += steps
 
